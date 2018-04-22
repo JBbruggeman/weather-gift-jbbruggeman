@@ -1,0 +1,176 @@
+//
+//  DetailVC.swift
+//  weatherGift
+//
+//  Created by JB Bruggeman on 3/19/18.
+//  Copyright © 2018 JB Bruggeman. All rights reserved.
+//
+
+import UIKit
+import CoreLocation
+
+private let dateFormatter: DateFormatter = {
+    let dateFormatter = DateFormatter()
+    dateFormatter.dateFormat = "EEEE, MMM dd, y"
+    return dateFormatter
+}()
+
+class DetailVC: UIViewController {
+    @IBOutlet weak var dateLabel: UILabel!
+    @IBOutlet weak var summaryLabel: UILabel!
+    @IBOutlet weak var tempLabel: UILabel!
+    @IBOutlet weak var locationLabel: UILabel!
+    @IBOutlet weak var currentImage: UIImageView!
+    @IBOutlet weak var tableView: UITableView!
+    @IBOutlet weak var collectionView: UICollectionView!
+    
+    var currentPage = 0
+    var locationsArray = [WeatherLocation]()
+    var locationDetail: WeatherDetail!
+    var locationManager: CLLocationManager!
+    var currentLocation: CLLocation!
+    
+    
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        tableView.delegate = self
+        tableView.dataSource = self
+        collectionView.delegate = self
+        collectionView.dataSource = self
+        
+        locationDetail = WeatherDetail(name: locationsArray[currentPage].name, coordinates: locationsArray[currentPage].coordinates)
+        
+        if currentPage != 0 {
+            self.locationDetail.getWeather {
+                self.updateUserInterface()
+            }
+        }
+    }
+    
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        if currentPage == 0 {
+            getLocation()
+        }
+    }
+    
+    func updateUserInterface() {
+        locationLabel.text = locationDetail.name
+        let dateString = locationDetail.currentTime.format(timeZone: locationDetail.timeZone, dateFormatter: dateFormatter)
+        dateLabel.text = dateString
+        tempLabel.text = locationDetail.currentTemp
+        summaryLabel.text = locationDetail.currentSummary
+        currentImage.image = UIImage(named: locationDetail.currentIcon)
+        tableView.reloadData()
+        collectionView.reloadData()
+    }
+    
+    func showAlert(title: String, message: String) {
+        let alertController = UIAlertController(title: title, message: message, preferredStyle: .alert)
+        let alertAction = UIAlertAction(title: "OK", style: .default, handler: nil)
+        alertController.addAction(alertAction)
+        present(alertController, animated: true, completion: nil)
+    }
+    
+}
+extension DetailVC: CLLocationManagerDelegate {
+    func getLocation() {
+        locationManager = CLLocationManager()
+        locationManager.delegate = self
+    }
+    
+    func handleLocationAuthorizationStatus(status: CLAuthorizationStatus) {
+        switch status {
+        case .notDetermined:
+            locationManager.requestWhenInUseAuthorization()
+        case .authorizedAlways, .authorizedWhenInUse:
+            locationManager.requestLocation()
+        case .denied:
+            showAlert(title: "User has not authorized location services", message: "Open the Settings app > Privacy > Location Services > WeatherGift to enable location services in this app")
+            print("I'm sorry cannot show user location")
+        case.restricted:
+            showAlert(title: "Location services denied", message: "Check parental privacy settings")
+            print("Location cannot be shown, denied use")
+        }
+    }
+    
+    func showAlertToPrivacySettings(title: String, message: String) {
+        let alertController = UIAlertController(title: title, message: message, preferredStyle: .alert)
+        guard let settingsURL = URL(string: UIApplicationOpenSettingsURLString) else {
+            print("something has gone wrong...terribly, terribly wrong")
+            return
+        }
+        let settingsAction = UIAlertAction(title: "Settings", style: .default) { value in UIApplication.shared.open(settingsURL, options: [:], completionHandler: nil)
+        }
+        let cancelAction = UIAlertAction(title: "Cancel", style: .cancel, handler: nil)
+        alertController.addAction(settingsAction)
+        alertController.addAction(cancelAction)
+        present(alertController, animated: true, completion: nil)
+    }
+    
+    func locationManager(_ manager: CLLocationManager, didChangeAuthorization status: CLAuthorizationStatus) {
+        handleLocationAuthorizationStatus(status: status)
+    }
+    
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        let geoCoder = CLGeocoder()
+        var place = ""
+        currentLocation = locations.last
+        let currentLatitude = currentLocation.coordinate.latitude
+        let currentLongitude = currentLocation.coordinate.longitude
+        let currentCoordinates = "\(currentLatitude),\(currentLongitude)"
+        geoCoder.reverseGeocodeLocation(currentLocation, completionHandler: {placemarks,
+            error in
+            if placemarks != nil {
+                let placemark = placemarks?.last
+                place = (placemark?.name)!
+            } else {
+                print("error optional")
+                place = "Unknown Weather Location"
+            }
+            self.locationsArray[0].name = place
+            self.locationsArray[0].coordinates = currentCoordinates
+            self.locationDetail = WeatherDetail(name: place, coordinates: currentCoordinates)
+            self.locationDetail.getWeather {
+                self.updateUserInterface()
+            }
+        })
+    }
+    
+    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        print("Failed to get user location")
+    }
+}
+
+extension DetailVC: UITableViewDataSource, UITableViewDelegate {
+    
+    func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+        return locationDetail.dailyForecastArray.count
+    }
+    
+    func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        let dailyForecast = locationDetail.dailyForecastArray[indexPath.row]
+        let cell = tableView.dequeueReusableCell(withIdentifier: "DayWeatherCell", for: indexPath) as! DayWeatherCell
+        let timeZone = locationDetail.timeZone
+        cell.updateWithDailyForecast(with: dailyForecast, timeZone: timeZone)
+        return cell
+    }
+    
+    func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat {
+        return 80
+    }
+}
+
+extension DetailVC: UICollectionViewDataSource, UICollectionViewDelegate  {
+    func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
+        return locationDetail.hourlyForecastArray.count
+    }
+    
+    func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
+        let hourlyCell = collectionView.dequeueReusableCell(withReuseIdentifier: "HourlyCell", for: indexPath) as! HourlyWeatherCell
+        let hourlyForecast = locationDetail.hourlyForecastArray[indexPath.row]
+        let timeZone = locationDetail.timeZone
+        hourlyCell.update(with: hourlyForecast, timeZone: timeZone)
+        return hourlyCell
+    }
+}
